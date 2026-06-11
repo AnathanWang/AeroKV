@@ -24,6 +24,36 @@ namespace AeroKV
             ExpirationTime = DateTime.UtcNow.Add(ttl); // рассчитать точнее время смерти
         }
     }
+
+    public class RateLimiter
+    {
+        private readonly ConcurrentDictionary<long, (DateTime WindowStart, int RequestCount)> _userRequests = new();
+        private readonly int _maxRequests;
+        private readonly TimeSpan _windowSize;
+
+        public RateLimiter(int maxRequests, TimeSpan windowSize)
+        {
+            _maxRequests = maxRequests;
+            _windowSize = windowSize;
+        }
+
+        public bool IsRequestAllowed(long userId)
+        {
+            DateTime now = DateTime.UtcNow;
+
+            var userStats = _userRequests.AddOrUpdate(userId, _ => (now, 1), (_, current) =>
+            {
+                if (now - current.WindowStart > _windowSize)
+                {
+                    return (now, 1);
+                }
+
+                return (current.WindowStart, current.RequestCount + 1);
+            });
+
+            return userStats.RequestCount <= _maxRequests;
+        }
+    }
     
     //Движок хранения in memory key-value store (aero kv engine)
     public class AeroKvEngine
@@ -77,6 +107,8 @@ namespace AeroKV
 
     class Program
     {
+        private static readonly RateLimiter _limiter =
+            new RateLimiter(maxRequests: 3, windowSize: TimeSpan.FromSeconds(10));
         static async Task Main(string[] args)
         {
             // Передаем токен напрямую, без лишних переменных и проверок
@@ -110,6 +142,17 @@ namespace AeroKV
         {
             if (update.Message is not { Text: { } messageText } message) return;
             var chatId = message.Chat.Id;
+            if (!_limiter.IsRequestAllowed(chatId))
+            {
+                await botClient.SendMessage(
+                    chatId: chatId,
+                    text: "🛑 *AeroKV Rate Limit Exceeded:* Ты отправляешь запросы слишком быстро! Разрешено не более 3 запросов в 10 секунд. Остынь.",
+                    parseMode: ParseMode.Markdown,
+                    cancellationToken: cancellationToken);
+
+                Console.WriteLine($"[AeroKV-Security] Запрос от пользователя {chatId} заблокирован (Rate Limit).");
+                return; // Мгновенно прерываем выполнение метода!
+            }
 
             var kvEngine = AeroKvEngine.Instance;
 

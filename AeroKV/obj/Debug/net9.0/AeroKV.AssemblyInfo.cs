@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("AeroKV")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+d69e1e5805ed617f623282e7b1a9550b2f872d94")]
 [assembly: System.Reflection.AssemblyProductAttribute("AeroKV")]
 [assembly: System.Reflection.AssemblyTitleAttribute("AeroKV")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
