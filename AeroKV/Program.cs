@@ -11,6 +11,8 @@ using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Collections.Generic;
+using Serilog;
+using Serilog.Core;
 
 namespace AeroKV
 {
@@ -113,7 +115,7 @@ namespace AeroKV
                     if (_store.TryGetValue(key, out var item) && item.IsExpired)
                     {
                         _store.TryRemove(key, out _);
-                        Console.WriteLine($"[AeroKV-Eviction] Ключ '{key}' автоматически удален из оперативной памяти (TTL Expired).");
+                        Log.Information("Ключ '{Key}' автоматически удален из памяти (TTL Expired)", key);
                     }
                 }
             }
@@ -128,19 +130,19 @@ namespace AeroKV
         public void SaveToDisk()
         {
             if (_store.IsEmpty) return;
+            
+            var snapshot = new Dictionary<string, AeroKvItem>(_store);
 
             lock (_filelock)
             {
                 if (_isSaving)
                 {
-                    Console.WriteLine("[AeroKV-Persistence] Фоновое сохранение уже выполняется. Пропускаем дублирующий запрос.");
+                    Log.Information("Фоновый снапшот успешно записан на диск ({Count} ключей)", snapshot.Count);
                     return;
                 }
                 _isSaving = true;
             }
-
-            var snapshot = new Dictionary<string, AeroKvItem>(_store);
-
+            
             Task.Run(() =>
             {
                 try
@@ -154,14 +156,11 @@ namespace AeroKV
                         File.WriteAllText(DumpPath, jsonString);
                     }
 
-                    Console.ForegroundColor = ConsoleColor.Green;
-                    Console.WriteLine(
-                        $"[AeroKV-BGSAVE] Фоновый снапшот успешно записан на диск ({snapshot.Count} ключей).");
-                    Console.ResetColor();
+                    Log.Information("Фоновый снапшот успешно записан на диск ({Count} ключей)", snapshot.Count);
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[AeroKV-Persistence Error] Ошибка фонового сохранения: {ex.Message}");
+                    Log.Error(ex, "Ошибка фонового сохранения снапшота на диск");
                 }
                 finally
                 {
@@ -241,6 +240,11 @@ namespace AeroKV
             new RateLimiter(maxRequests: 3, windowSize: TimeSpan.FromSeconds(10));
         static async Task Main(string[] args)
         {
+            Log.Logger = new LoggerConfiguration()
+                .MinimumLevel.Debug()
+                .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
+                .CreateLogger();
+            Log.Information("Запуск ядра AeroKV Engine");
             // Передаем токен напрямую, без лишних переменных и проверок
             var botClient = new TelegramBotClient("8934538995:AAFTIR7fI9BsD5jKGLa19xkuJd1TVmzpICM");
             using var cts = new CancellationTokenSource();
@@ -268,6 +272,8 @@ namespace AeroKV
             // Перед полным закрытием сохраняем всё, что выжило в оперативной памяти
             Console.WriteLine("Завершение работы AeroKV... Сохраняем состояние...");
             AeroKvEngine.Instance.SaveToDisk();
+            Log.Information("Сервер успешно оставление. До связи!");
+            Log.CloseAndFlush();
         }
 
         private static async Task HandleUpdateAsync(ITelegramBotClient botClient, Update update,
@@ -317,7 +323,7 @@ namespace AeroKV
                         text: $"Данные успешно записаны в RAM!\nКлюч: `{key}`\nTTL: `{seconds}` сек.", 
                         parseMode: ParseMode.Markdown,
                         cancellationToken: cancellationToken);
-                    Console.WriteLine($"Запись ключа '{key}' выполнена успешно");
+                    Log.Information("Запись ключа '{Key}' выполнена успешно. TTL: {TTL} сек", key, seconds);
                 }
                 else
                 {
@@ -350,7 +356,7 @@ namespace AeroKV
                         text: $"🚀 *AeroKV Response:*\n`{result}`", 
                         parseMode: ParseMode.Markdown,
                         cancellationToken: cancellationToken);
-                    Console.WriteLine($"Чтение ключа '{key}' успешно");
+                    Log.Information("Чтение ключа '{Key}' успешно", key);
                 }
                 else
                 {
@@ -359,7 +365,7 @@ namespace AeroKV
                         text: $"Ключ `{key}` отсутствует в системе или был уничтожен по истечении срока TTL.",
                         parseMode: ParseMode.Markdown, 
                         cancellationToken: cancellationToken);
-                    Console.WriteLine($"Чтение ключа '{key}' провалено (Miss/Expired)");
+                    Log.Warning("Чтение ключа '{Key}' провалено (Miss/Expired)", key);
                 }
             }
             else

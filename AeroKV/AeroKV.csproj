@@ -8,6 +8,7 @@
     </PropertyGroup>
 
     <ItemGroup>
+      <PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
       <PackageReference Include="Telegram.Bot" Version="22.10.0.2-dev.3" />
     </ItemGroup>
 

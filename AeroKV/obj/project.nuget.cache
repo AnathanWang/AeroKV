@@ -1,12 +1,14 @@
 {
   "version": 2,
-  "dgSpecHash": "etZBmDDfqwk=",
+  "dgSpecHash": "9cVhlMAr5oQ=",
   "success": true,
   "projectFilePath": "/Users/nathankarma/RiderProjects/AeroKV/AeroKV/AeroKV.csproj",
   "expectedPackageFiles": [
     "/Users/nathankarma/.nuget/packages/microsoft.extensions.dependencyinjection.abstractions/8.0.0/microsoft.extensions.dependencyinjection.abstractions.8.0.0.nupkg.sha512",
     "/Users/nathankarma/.nuget/packages/microsoft.extensions.options/8.0.0/microsoft.extensions.options.8.0.0.nupkg.sha512",
     "/Users/nathankarma/.nuget/packages/microsoft.extensions.primitives/8.0.0/microsoft.extensions.primitives.8.0.0.nupkg.sha512",
+    "/Users/nathankarma/.nuget/packages/serilog/4.0.0/serilog.4.0.0.nupkg.sha512",
+    "/Users/nathankarma/.nuget/packages/serilog.sinks.console/6.1.1/serilog.sinks.console.6.1.1.nupkg.sha512",
     "/Users/nathankarma/.nuget/packages/system.text.json/8.0.5/system.text.json.8.0.5.nupkg.sha512",
     "/Users/nathankarma/.nuget/packages/telegram.bot/22.10.0.2-dev.3/telegram.bot.22.10.0.2-dev.3.nupkg.sha512"
   ],
