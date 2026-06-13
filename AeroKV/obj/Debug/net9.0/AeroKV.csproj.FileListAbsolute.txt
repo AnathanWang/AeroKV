@@ -12,6 +12,7 @@
 /Users/nathankarma/RiderProjects/AeroKV/AeroKV/obj/Debug/net9.0/AeroKV.AssemblyInfoInputs.cache
 /Users/nathankarma/RiderProjects/AeroKV/AeroKV/obj/Debug/net9.0/AeroKV.AssemblyInfo.cs
 /Users/nathankarma/RiderProjects/AeroKV/AeroKV/obj/Debug/net9.0/AeroKV.csproj.CoreCompileInputs.cache
+/Users/nathankarma/RiderProjects/AeroKV/AeroKV/obj/Debug/net9.0/AeroKV.sourcelink.json
 /Users/nathankarma/RiderProjects/AeroKV/AeroKV/obj/Debug/net9.0/AeroKV.csproj.Up2Date
 /Users/nathankarma/RiderProjects/AeroKV/AeroKV/obj/Debug/net9.0/AeroKV.dll
 /Users/nathankarma/RiderProjects/AeroKV/AeroKV/obj/Debug/net9.0/refint/AeroKV.dll

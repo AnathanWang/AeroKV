@@ -7,16 +7,25 @@ using Telegram.Bot.Polling;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 
+using System.IO;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Collections.Generic;
+
 namespace AeroKV
 {
     //Структура данных: элемент хранилища
     public class AeroKvItem
     {
-        public string Value { get; set; } //данные сохраненные пользователем
+        public string Value { get; set; } = ""; //данные сохраненные пользователем
         public DateTime ExpirationTime { get; set; } // метка когда должно быть удалено
         
         //свойство для быстрой проверки истек ли срок жизни ttl
+        [JsonIgnore]
         public bool IsExpired => DateTime.UtcNow > ExpirationTime;
+
+        // Нужен для System.Text.Json при чтении снапшота с диска
+        public AeroKvItem() { }
 
         public AeroKvItem(string value, TimeSpan ttl)
         {
@@ -67,12 +76,14 @@ namespace AeroKV
 
         private AeroKvEngine()
         {
+            LoadFromDisk();
             Task.Run(ActiveEvictionLoopAsync);
         }
 
         public void Set(string key, string value, TimeSpan ttl)
         {
             _store[key] = new AeroKvItem(value, ttl);
+            SaveToDisk();
         }
 
         public string Get(string key)
@@ -101,6 +112,94 @@ namespace AeroKV
                         Console.WriteLine($"[AeroKV-Eviction] Ключ '{key}' автоматически удален из оперативной памяти (TTL Expired).");
                     }
                 }
+            }
+        }
+        
+        // Файл будет гарантированно лежать в твоей домашней папке пользователя на Mac (на одном уровне с Загрузками/Документами)
+        // Поднимаемся на несколько уровней вверх из папки bin прямо в корень твоего проекта
+        private static readonly string DumpPath = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "aerokv_snapshot.json");
+
+        public void SaveToDisk()
+        {
+            try
+            {
+                if (_store.IsEmpty) return;
+
+                var options = new JsonSerializerOptions { WriteIndented = true };
+
+                string jsonString = JsonSerializer.Serialize(_store, options);
+
+                File.WriteAllText(DumpPath, jsonString);
+
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine(
+                    $"[AeroKV-Persistence] Снапшот базы успешно сохранен на диск ({_store.Count} ключей).");
+                Console.ResetColor();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[AeroKV-Persistence Error] Не удалось сохранить данные: {ex.Message}");
+            }
+        }
+
+        public void LoadFromDisk()
+        {
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine($"[AeroKV-Debug] Ищу снапшот по пути: {DumpPath}");
+            Console.ResetColor();
+
+            if (!File.Exists(DumpPath)) 
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("[AeroKV-Debug] Файл снапшота НЕ НАЙДЕН на диске. Начинаем с пустой базой.");
+                Console.ResetColor();
+                return;
+            }
+
+            try
+            {
+                string jsonString = File.ReadAllText(DumpPath);
+        
+                // Изменение: читаем сначала как обычный плоский Dictionary
+                var deserialized = JsonSerializer.Deserialize<Dictionary<string, AeroKvItem>>(jsonString);
+
+                if (deserialized != null)
+                {
+                    _store.Clear();
+                    foreach (var pair in deserialized)
+                    {
+                        string key = pair.Key;
+                        string value = pair.Value.Value;
+                        DateTime expTime = pair.Value.ExpirationTime;
+
+                        // Жестко принуждаем время быть UTC прямо в сырых данных
+                        if (expTime.Kind != DateTimeKind.Utc)
+                        {
+                            expTime = DateTime.SpecifyKind(expTime, DateTimeKind.Utc);
+                        }
+
+                        // Считаем, сколько секунд жизни ОСТАЛОСЬ у ключа
+                        TimeSpan remainingTtl = expTime - DateTime.UtcNow;
+
+                        // Если ключ еще должен жить — создаем его в хранилище заново с чистым временем
+                        if (remainingTtl.TotalSeconds > 0)
+                        {
+                            _store[key] = new AeroKvItem(value, remainingTtl);
+                        }
+                        else
+                        {
+                            Console.WriteLine($"[AeroKV-Persistence] Ключ '{key}' пропущен: его TTL истек, пока сервер был отключен.");
+                        }
+                    }
+
+                    Console.ForegroundColor = ConsoleColor.Green;
+                    Console.WriteLine($"[AeroKV-Persistence] Данные успешно восстановлены с диска. Активных ключей: {_store.Count}");
+                    Console.ResetColor();
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[AeroKV-Persistence Error] Не удалось прочитать снапшот: {ex.Message}");
             }
         }
     }
@@ -135,6 +234,9 @@ namespace AeroKV
             
             Console.ReadLine();
             cts.Cancel();
+            // Перед полным закрытием сохраняем всё, что выжило в оперативной памяти
+            Console.WriteLine("Завершение работы AeroKV... Сохраняем состояние...");
+            AeroKvEngine.Instance.SaveToDisk();
         }
 
         private static async Task HandleUpdateAsync(ITelegramBotClient botClient, Update update,
