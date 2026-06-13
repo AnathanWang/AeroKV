@@ -119,27 +119,54 @@ namespace AeroKV
         // Поднимаемся на несколько уровней вверх из папки bin прямо в корень твоего проекта
         private static readonly string DumpPath = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "aerokv_snapshot.json");
 
+        private readonly object _filelock = new();
+        private bool _isSaving = false;
         public void SaveToDisk()
         {
-            try
+            if (_store.IsEmpty) return;
+
+            lock (_filelock)
             {
-                if (_store.IsEmpty) return;
-
-                var options = new JsonSerializerOptions { WriteIndented = true };
-
-                string jsonString = JsonSerializer.Serialize(_store, options);
-
-                File.WriteAllText(DumpPath, jsonString);
-
-                Console.ForegroundColor = ConsoleColor.Green;
-                Console.WriteLine(
-                    $"[AeroKV-Persistence] Снапшот базы успешно сохранен на диск ({_store.Count} ключей).");
-                Console.ResetColor();
+                if (_isSaving)
+                {
+                    Console.WriteLine("[AeroKV-Persistence] Фоновое сохранение уже выполняется. Пропускаем дублирующий запрос.");
+                    return;
+                }
+                _isSaving = true;
             }
-            catch (Exception ex)
+
+            var snapshot = new Dictionary<string, AeroKvItem>(_store);
+
+            Task.Run(() =>
             {
-                Console.WriteLine($"[AeroKV-Persistence Error] Не удалось сохранить данные: {ex.Message}");
-            }
+                try
+                {
+                    var options = new JsonSerializerOptions { WriteIndented = true };
+
+                    string jsonString = JsonSerializer.Serialize(_store, options);
+
+                    lock (_filelock)
+                    {
+                        File.WriteAllText(DumpPath, jsonString);
+                    }
+
+                    Console.ForegroundColor = ConsoleColor.Green;
+                    Console.WriteLine(
+                        $"[AeroKV-BGSAVE] Фоновый снапшот успешно записан на диск ({snapshot.Count} ключей).");
+                    Console.ResetColor();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[AeroKV-Persistence Error] Ошибка фонового сохранения: {ex.Message}");
+                }
+                finally
+                {
+                    lock (_filelock)
+                    {
+                        _isSaving = false;
+                    }
+                }
+            });
         }
 
         public void LoadFromDisk()

@@ -1,10 +1,10 @@
 {
-  "ttl3": {
-    "Value": "ttl",
-    "ExpirationTime": "2026-06-13T09:32:39.595769Z"
+  "ttl4": {
+    "Value": "ttl_course",
+    "ExpirationTime": "2026-06-13T10:05:20.439246Z"
   },
   "ttl2": {
     "Value": "ttl",
-    "ExpirationTime": "2026-06-13T12:11:25.825552Z"
+    "ExpirationTime": "2026-06-13T12:11:25.825617Z"
   }
 }
