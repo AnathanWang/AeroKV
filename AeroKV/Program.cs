@@ -6,7 +6,7 @@ using Telegram.Bot;
 using Telegram.Bot.Polling;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
-
+using System.Linq;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -36,9 +36,10 @@ namespace AeroKV
 
     public class RateLimiter
     {
-        private readonly ConcurrentDictionary<long, (DateTime WindowStart, int RequestCount)> _userRequests = new();
+        private readonly ConcurrentDictionary<long, List<DateTime>> _userLog = new();
         private readonly int _maxRequests;
         private readonly TimeSpan _windowSize;
+        private readonly object _lock = new();
 
         public RateLimiter(int maxRequests, TimeSpan windowSize)
         {
@@ -49,18 +50,21 @@ namespace AeroKV
         public bool IsRequestAllowed(long userId)
         {
             DateTime now = DateTime.UtcNow;
+            DateTime windowStart = now - _windowSize;
+            var timestamps = _userLog.GetOrAdd(userId, _ => new List<DateTime>());
 
-            var userStats = _userRequests.AddOrUpdate(userId, _ => (now, 1), (_, current) =>
+            lock (_lock)
             {
-                if (now - current.WindowStart > _windowSize)
+                timestamps.RemoveAll(t => t < windowStart);
+
+                if (timestamps.Count < _maxRequests)
                 {
-                    return (now, 1);
+                    timestamps.Add(now);
+                    return true;
                 }
 
-                return (current.WindowStart, current.RequestCount + 1);
-            });
-
-            return userStats.RequestCount <= _maxRequests;
+                return false;
+            };
         }
     }
     
