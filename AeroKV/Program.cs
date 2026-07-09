@@ -60,6 +60,12 @@ namespace AeroKV
             {
                 timestamps.RemoveAll(t => t < windowStart);
 
+                if (timestamps.Count == 0)
+                {
+                    _userLog.TryRemove(userId, out _);
+                    return true;
+                }
+
                 if (timestamps.Count < _maxRequests)
                 {
                     timestamps.Add(now);
@@ -89,6 +95,9 @@ namespace AeroKV
 
         public void Set(string key, string value, TimeSpan ttl)
         {
+            if (key.Length > 256) throw new ArgumentException("Key too long (max 256");
+            if (value.Length > 10_000) throw new ArgumentException("Value too large(max 10KB)");
+            
             _store[key] = new AeroKvItem(value, ttl);
             SaveToDisk();
         }
@@ -128,40 +137,41 @@ namespace AeroKV
 
         private readonly object _filelock = new();
         private bool _isSaving = false;
+        private bool _saveScheduled = false;
         public void SaveToDisk()
         {
-            if (_store.IsEmpty) return;
-            
-            var snapshot = new Dictionary<string, AeroKvItem>(_store);
-
             lock (_filelock)
             {
-                if (_isSaving)
-                {
-                    Log.Information("Фоновый снапшот успешно записан на диск ({Count} ключей)", snapshot.Count);
-                    return;
-                }
-                _isSaving = true;
+                if (_saveScheduled || _isSaving) return;
+                _saveScheduled = true;
             }
-            
-            Task.Run(() =>
+
+            Task.Run(async () =>
             {
+                await Task.Delay(1000);
+
+                lock (_filelock)
+                {
+                    _isSaving = true;
+                    _saveScheduled = false;
+                }
+
                 try
                 {
+                    var snapshot = new Dictionary<string, AeroKvItem>(_store);
                     var options = new JsonSerializerOptions { WriteIndented = true };
-
-                    string jsonString = JsonSerializer.Serialize(_store, options);
+                    string jsonString = JsonSerializer.Serialize(snapshot, options);
 
                     lock (_filelock)
                     {
                         File.WriteAllText(DumpPath, jsonString);
                     }
 
-                    Log.Information("Фоновый снапшот успешно записан на диск ({Count} ключей)", snapshot.Count);
+                    Log.Information("Снапшот сохранен ({Count} ключей)", snapshot.Count);
                 }
                 catch (Exception ex)
                 {
-                    Log.Error(ex, "Ошибка фонового сохранения снапшота на диск");
+                    Log.Error(ex, "Ошибка сохранения снапшота");
                 }
                 finally
                 {
@@ -246,8 +256,10 @@ namespace AeroKV
                 .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
                 .CreateLogger();
             Log.Information("Запуск ядра AeroKV Engine");
-            // Передаем токен напрямую, без лишних переменных и проверок
-            var botClient = new TelegramBotClient("8934538995:AAFTIR7fI9BsD5jKGLa19xkuJd1TVmzpICM");
+
+            var token = Environment.GetEnvironmentVariable("TELEGRAM_BOT_TOKEN") ??
+                        throw new Exception("TELEGRAM_BOT_TOKEN not set");
+            var botClient = new TelegramBotClient(token);
             using var cts = new CancellationTokenSource();
 
             var receiverOptions = new ReceiverOptions { AllowedUpdates = Array.Empty<UpdateType>() };
@@ -277,114 +289,125 @@ namespace AeroKV
             Log.CloseAndFlush();
         }
 
+
         private static async Task HandleUpdateAsync(ITelegramBotClient botClient, Update update,
             CancellationToken cancellationToken)
         {
             if (update.Message is not { Text: { } messageText } message) return;
             var chatId = message.Chat.Id;
-            if (!_limiter.IsRequestAllowed(chatId))
+            try
             {
-                await botClient.SendMessage(
-                    chatId: chatId,
-                    text: "🛑 *AeroKV Rate Limit Exceeded:* Ты отправляешь запросы слишком быстро! Разрешено не более 3 запросов в 10 секунд. Остынь.",
-                    parseMode: ParseMode.Markdown,
-                    cancellationToken: cancellationToken);
-
-                Console.WriteLine($"[AeroKV-Security] Запрос от пользователя {chatId} заблокирован (Rate Limit).");
-                return; // Мгновенно прерываем выполнение метода!
-            }
-
-            var kvEngine = AeroKvEngine.Instance;
-
-            var args = messageText.Split(' ', 4);
-            string command = args[0].ToLower();
-
-            if (command == "/set")
-            {
-                if (args.Length < 4)
+                if (!_limiter.IsRequestAllowed(chatId))
                 {
                     await botClient.SendMessage(
                         chatId: chatId,
-                        text: "Неверный формат команды! Используйте метод: /set [ключ] [время в секундах] [значение]",
-                        parseMode: ParseMode.Markdown, 
-                        cancellationToken: cancellationToken);
-                    return;
-                }
-
-                string key = args[1];
-                string ttlStr = args[2];
-                string value = args[3];
-
-                if (int.TryParse(ttlStr, out int seconds) && seconds > 0)
-                {
-                    kvEngine.Set(key, value, TimeSpan.FromSeconds(seconds));
-
-                    await botClient.SendMessage(
-                        chatId: chatId,
-                        text: $"Данные успешно записаны в RAM!\nКлюч: `{key}`\nTTL: `{seconds}` сек.", 
+                        text:
+                        "🛑 *AeroKV Rate Limit Exceeded:* Ты отправляешь запросы слишком быстро! Разрешено не более 3 запросов в 10 секунд. Остынь.",
                         parseMode: ParseMode.Markdown,
                         cancellationToken: cancellationToken);
-                    Log.Information("Запись ключа '{Key}' выполнена успешно. TTL: {TTL} сек", key, seconds);
+
+                    Console.WriteLine($"[AeroKV-Security] Запрос от пользователя {chatId} заблокирован (Rate Limit).");
+                    return; // Мгновенно прерываем выполнение метода!
+                }
+
+                var kvEngine = AeroKvEngine.Instance;
+
+                var args = messageText.Split(' ', 4);
+                string command = args[0].ToLower();
+
+                if (command == "/set")
+                {
+                    if (args.Length < 4)
+                    {
+                        await botClient.SendMessage(
+                            chatId: chatId,
+                            text:
+                            "Неверный формат команды! Используйте метод: /set [ключ] [время в секундах] [значение]",
+                            parseMode: ParseMode.Markdown,
+                            cancellationToken: cancellationToken);
+                        return;
+                    }
+
+                    string key = args[1];
+                    string ttlStr = args[2];
+                    string value = args[3];
+
+                    if (int.TryParse(ttlStr, out int seconds) && seconds > 0)
+                    {
+                        kvEngine.Set(key, value, TimeSpan.FromSeconds(seconds));
+
+                        await botClient.SendMessage(
+                            chatId: chatId,
+                            text: $"Данные успешно записаны в RAM!\nКлюч: `{key}`\nTTL: `{seconds}` сек.",
+                            parseMode: ParseMode.Markdown,
+                            cancellationToken: cancellationToken);
+                        Log.Information("Запись ключа '{Key}' выполнена успешно. TTL: {TTL} сек", key, seconds);
+                    }
+                    else
+                    {
+                        await botClient.SendMessage(
+                            chatId: chatId,
+                            text: "Параметр времени жизни должен быть больше 0 секунд",
+                            parseMode: ParseMode.Markdown,
+                            cancellationToken: cancellationToken);
+                    }
+                }
+                else if (command == "/get")
+                {
+                    if (args.Length < 2)
+                    {
+                        await botClient.SendMessage(
+                            chatId: chatId,
+                            text: "Не указан ключ! Используйте метод: /get [ключ]",
+                            parseMode: ParseMode.Markdown,
+                            cancellationToken: cancellationToken);
+                        return;
+                    }
+
+                    string key = args[1];
+                    string result = kvEngine.Get(key);
+
+                    if (result != null)
+                    {
+                        await botClient.SendMessage(
+                            chatId: chatId,
+                            text: $"🚀 *AeroKV Response:*\n`{result}`",
+                            parseMode: ParseMode.Markdown,
+                            cancellationToken: cancellationToken);
+                        Log.Information("Чтение ключа '{Key}' успешно", key);
+                    }
+                    else
+                    {
+                        await botClient.SendMessage(
+                            chatId: chatId,
+                            text: $"Ключ `{key}` отсутствует в системе или был уничтожен по истечении срока TTL.",
+                            parseMode: ParseMode.Markdown,
+                            cancellationToken: cancellationToken);
+                        Log.Warning("Чтение ключа '{Key}' провалено (Miss/Expired)", key);
+                    }
                 }
                 else
                 {
-                    await botClient.SendMessage(
-                        chatId: chatId, 
-                        text: "Параметр времени жизни должен быть больше 0 секунд",
-                        parseMode: ParseMode.Markdown, 
-                        cancellationToken: cancellationToken);
-                }
-            }
-            else if (command == "/get")
-            {
-                if (args.Length < 2)
-                {
-                    await botClient.SendMessage(
-                        chatId: chatId, 
-                        text: "Не указан ключ! Используйте метод: /get [ключ]",
-                        parseMode: ParseMode.Markdown, 
-                        cancellationToken: cancellationToken);
-                    return;
-                }
+                    string welcomeMessage = "⚡️ *Добро пожаловать в интерфейс управления AeroKV* ⚡️\n\n" +
+                                            "Вы подключены к легковесному Key-Value хранилищу в оперативной памяти.\n\n" +
+                                            "ℹ️ *Доступные методы API:*\n" +
+                                            "🔹 `/set [ключ] [время_сек] [значение]` — Сохранить данные с таймером жизни.\n" +
+                                            "🔹 `/get [ключ]` — Извлечь данные из памяти сервера.\n\n" +
+                                            "_Пример использования:_\n" +
+                                            "`/set session_id 45 active_user_777`\n" +
+                                            "`/get session_id`";
 
-                string key = args[1];
-                string result = kvEngine.Get(key);
-
-                if (result != null)
-                {
-                    await botClient.SendMessage(
-                        chatId: chatId, 
-                        text: $"🚀 *AeroKV Response:*\n`{result}`", 
-                        parseMode: ParseMode.Markdown,
-                        cancellationToken: cancellationToken);
-                    Log.Information("Чтение ключа '{Key}' успешно", key);
-                }
-                else
-                {
                     await botClient.SendMessage(
                         chatId: chatId,
-                        text: $"Ключ `{key}` отсутствует в системе или был уничтожен по истечении срока TTL.",
-                        parseMode: ParseMode.Markdown, 
+                        text: welcomeMessage,
+                        parseMode: ParseMode.Markdown,
                         cancellationToken: cancellationToken);
-                    Log.Warning("Чтение ключа '{Key}' провалено (Miss/Expired)", key);
                 }
             }
-            else
+            catch (Exception ex)
             {
-                string welcomeMessage = "⚡️ *Добро пожаловать в интерфейс управления AeroKV* ⚡️\n\n" +
-                                        "Вы подключены к легковесному Key-Value хранилищу в оперативной памяти.\n\n" +
-                                        "ℹ️ *Доступные методы API:*\n" +
-                                        "🔹 `/set [ключ] [время_сек] [значение]` — Сохранить данные с таймером жизни.\n" +
-                                        "🔹 `/get [ключ]` — Извлечь данные из памяти сервера.\n\n" +
-                                        "_Пример использования:_\n" +
-                                        "`/set session_id 45 active_user_777`\n" +
-                                        "`/get session_id`";
-
-                await botClient.SendMessage(
-                    chatId: chatId, 
-                    text: welcomeMessage, 
-                    parseMode: ParseMode.Markdown,
-                    cancellationToken: cancellationToken);
+                Log.Error(ex, "Ошибка обработки сообщения от {ChatId}", chatId);
+                await botClient.SendMessage(chatId, "Внутренняя ошибка сервера", cancellationToken: cancellationToken);
             }
         }
 

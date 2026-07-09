@@ -48,6 +48,9 @@ public class TcpServer
 
     private async Task HandleClientAsync(TcpClient client)
     {
+        client.ReceiveTimeout = 60000;
+        client.SendTimeout = 60000;
+        
         using (client)
         await using (NetworkStream stream = client.GetStream())
         using (var reader = new StreamReader(stream, Encoding.UTF8))
